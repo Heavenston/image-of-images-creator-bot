@@ -6,3 +6,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tokio = { version = "1", features = ["full"] }
+serenity = { version = "0.10", features = ["cache", "client", "gateway", "rustls_backend", "model", "unstable_discord_api"], default-features = false }
+image-of-images-creator = { git = "https://github.com/Heavenston/image-of-images-creator" }
+image = "0.23"
+reqwest = { version = "0.11", features = ["multipart", "blocking"] }
+rayon = "1.5"
+base64 = "0.13"
+serde = { version = "1", features = ["derive"] }
+formdata = "0.13"

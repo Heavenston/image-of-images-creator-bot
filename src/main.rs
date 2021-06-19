@@ -1,13 +1,10 @@
 use std::env;
 use serenity::{
     async_trait,
-    client::bridge::gateway::GatewayIntents,
     model::{gateway::Ready, interactions::{Interaction, InteractionResponseType, ApplicationCommand}},
     prelude::*,
 };
 use serenity::model::prelude::*;
-use serenity::builder::CreateEmbed;
-use std::time::Duration;
 use image_of_images_creator::*;
 use std::sync::Arc;
 use image::ColorType;
@@ -30,6 +27,22 @@ impl EventHandler for Handler {
                 a
                     .name("transform")
                     .description("Transform an image/your profile picture")
+                    .create_option(|o| {
+                        o.name("avatar")
+                            .kind(ApplicationCommandOptionType::SubCommand)
+                            .description("Transform your avatar")
+                    })
+                    .create_option(|o| {
+                        o.name("image")
+                            .kind(ApplicationCommandOptionType::SubCommand)
+                            .description("Transform the given image")
+                            .create_sub_option(|o| o
+                                .name("image_url")
+                                .description("Image to be downloaded")
+                                .required(true)
+                                .kind(ApplicationCommandOptionType::String)
+                            )
+                    })
             }).await.unwrap();
         }
     }
@@ -56,7 +69,35 @@ impl EventHandler for Handler {
 
         if command.name == "transform" {
             let default_avatar_url = member.user.default_avatar_url();
-            let avatar_url = member.user.avatar_url().unwrap_or(default_avatar_url).replace("webp", "png");
+
+            let image_url = match data.options[0].name.as_str() {
+                "avatar" => {
+                    member.user.avatar_url()
+                        .unwrap_or(default_avatar_url)
+                        .replace("webp", "png")
+                },
+                "image" => {
+                    let url = match data.options[0].options[0].resolved.as_ref().unwrap() {
+                        ApplicationCommandInteractionDataOptionValue::String(u) => u.clone(),
+                        _ => unreachable!()
+                    };
+                    if !(url.starts_with("https://cdn.discordapp.com") || url.starts_with("https://media.discordapp.net")) {
+                        interaction
+                            .create_interaction_response(&ctx.http, move |response| {
+                                response
+                                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                                    .interaction_response_data(|d| {
+                                        d.content("You can only use images hosted by discord")
+                                    })
+                            })
+                            .await
+                            .unwrap();
+                        return
+                    }
+                    url
+                },
+                _ => unreachable!()
+            };
 
             interaction
                 .create_interaction_response(&ctx.http, move |response| {
@@ -66,12 +107,12 @@ impl EventHandler for Handler {
                 .await
                 .unwrap();
 
-            let response = match reqwest::get(&avatar_url).await {
+            let response = match reqwest::get(&image_url).await {
                 Ok(r) => r,
-                Err(e) => {
+                Err(_) => {
                     interaction
                         .create_followup_message(&ctx.http, |response| {
-                            response.content(format!("Could not download your avatar {}", e.to_string()))
+                            response.content(format!("Could not download image"))
                         })
                         .await
                         .unwrap();
@@ -83,7 +124,7 @@ impl EventHandler for Handler {
             let image_dictionary = self.image_dictionary.clone();
             let upload_response = tokio::task::spawn_blocking(move || {
                 let image = image::load_from_memory(&*image_bytes).unwrap()
-                    .resize_to_fill(100, 100, image::imageops::Triangle).to_rgb8();
+                    .resize(100, 100, image::imageops::Triangle).to_rgb8();
                 let new_image = image_of_image(&*image_dictionary, &image);
                 let mut img_data = Vec::new();
                 let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut img_data);

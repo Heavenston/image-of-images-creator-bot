@@ -31,6 +31,12 @@ impl EventHandler for Handler {
                         o.name("avatar")
                             .kind(ApplicationCommandOptionType::SubCommand)
                             .description("Transform your avatar")
+                            .create_sub_option(|o| o
+                                .name("target_user")
+                                .description("User of whom the avatar will be taken from")
+                                .required(false)
+                                .kind(ApplicationCommandOptionType::User)
+                            )
                     })
                     .create_option(|o| {
                         o.name("image")
@@ -72,7 +78,11 @@ impl EventHandler for Handler {
 
             let image_url = match data.options[0].name.as_str() {
                 "avatar" => {
-                    member.user.avatar_url()
+                    data.options[0].options.get(0).map(|o| match o.resolved.as_ref().unwrap() {
+                        ApplicationCommandInteractionDataOptionValue::User(u, ..) => u,
+                        _ => unreachable!()
+                    }).unwrap_or(&member.user)
+                        .avatar_url()
                         .unwrap_or(default_avatar_url)
                         .replace("webp", "png")
                 },

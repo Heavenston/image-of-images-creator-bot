@@ -8,6 +8,9 @@ use serenity::model::prelude::*;
 use image_of_images_creator::*;
 use std::sync::Arc;
 use image::ColorType;
+use std::time::Duration;
+use std::io::{Read, Cursor};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 struct Handler {
     image_dictionary: Arc<ImageDictionary>,
@@ -153,29 +156,111 @@ impl EventHandler for Handler {
                     .resize(250, 250, image::imageops::Triangle).to_rgb8();
                 let new_image = image_of_image(&*image_dictionary, &image);
                 let mut img_data = Vec::new();
-                let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut img_data, 25);
+                let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut img_data, 50);
                 encoder.encode(
                     new_image.as_raw(),
                     new_image.width(),
                     new_image.height(),
                     ColorType::Rgb8
                 ).unwrap();
-
                 img_data
             }).await.unwrap();
 
-            interaction
+            let loading_message = interaction
                 .create_followup_message(&ctx.http, |response| {
-                    response.content("Uploading image")
+                    response
+                        .content("Uploading image\n░░░░░░░░░░░░░░░ 0%")
                 })
                 .await
                 .unwrap();
-            interaction.channel_id.unwrap().send_files(&ctx.http, vec![(
-                img_data.as_slice(),
-                "new_image.jpg"
-            )], |m| {
-                m
-            }).await.unwrap();
+            let loading_message_id = loading_message.id;
+
+            let new_upload_progress_notify = Arc::new(tokio::sync::Notify::new());
+            let upload_progress = Arc::new(AtomicU8::new(0));
+
+            let img_url_handle = tokio::task::spawn_blocking({
+                let upload_progress = upload_progress.clone();
+                let new_upload_progress_notify = new_upload_progress_notify.clone();
+                move || {
+                    struct UploadProgress<R, C> {
+                        on_progress: C,
+                        last_perc: u8,
+                        inner: R,
+                        bytes_read: usize,
+                        total: usize,
+                    }
+                    impl<R: Read, C> Read for UploadProgress<R, C>
+                        where C: Fn(u8) -> () {
+                        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                            self.inner.read(buf)
+                                .map(|n| {
+                                    self.bytes_read += n;
+                                    let new_perc = (self.bytes_read * 100 / self.total) as u8;
+                                    if self.last_perc != new_perc {
+                                        (self.on_progress)(new_perc);
+                                        self.last_perc = new_perc;
+                                    }
+                                    n
+                                })
+                        }
+                    }
+
+                    use reqwest::blocking as rq;
+                    let response = rq::Client::new().post("https://litterbox.catbox.moe/resources/internals/api.php")
+                        .multipart(rq::multipart::Form::new()
+                            .text("reqtype", "fileupload")
+                            .text("time", "72h")
+                            .part("fileToUpload", rq::multipart::Part::reader(UploadProgress {
+                                on_progress: move |u| {
+                                    upload_progress.store(u, Ordering::Relaxed);
+                                    new_upload_progress_notify.notify_waiters();
+                                },
+                                last_perc: 0,
+                                total: img_data.len(),
+                                inner: Cursor::new(img_data),
+                                bytes_read: 0,
+                            }).file_name("new_image.jpg"))
+                        )
+                        .timeout(Duration::from_secs(120)).send().unwrap();
+                    response.text().unwrap()
+                }
+            });
+            loop {
+                new_upload_progress_notify.notified().await;
+                let upload_progress = upload_progress.load(Ordering::Relaxed);
+                let progress_bar_length = 15;
+                let mut progress_bar = String::new();
+                for _ in 0..(progress_bar_length as f32 * upload_progress as f32 / 100.) as u8 {
+                    progress_bar += "█";
+                }
+                while progress_bar.chars().count() < progress_bar_length {
+                    progress_bar += "░";
+                }
+                interaction
+                    .edit_followup_message(&ctx.http, loading_message_id, |response| {
+                        response
+                            .content(format!("Uploading image\n{} {}%", progress_bar, upload_progress))
+                    })
+                    .await
+                    .unwrap();
+                if upload_progress == 100 {
+                    break;
+                }
+            }
+            let img_url = img_url_handle.await.unwrap();
+
+            interaction
+                .edit_followup_message(&ctx.http, loading_message.id, |response| {
+                    response
+                        .content("Here is you image !")
+                        .create_embed(|a| {
+                            a
+                                .title(&img_url)
+                                .image(&img_url)
+                        })
+                })
+                .await
+                .unwrap();
         }
     }
 }
@@ -193,7 +278,7 @@ async fn main() {
     let image_dictionary = Arc::new({
         use rayon::prelude::*;
 
-        let reader = ImageDictionaryReader::open(&env::var("DICTIONARY_PATH").expect("No dictionary path selected"), (25, 25)).unwrap();
+        let reader = ImageDictionaryReader::open(&env::var("DICTIONARY_PATH").expect("No dictionary path selected"), (32, 32)).unwrap();
         println!("Loading {} images", reader.len());
         let mut chunks = reader.split(reader.unprocessed_len() / rayon::current_num_threads());
 

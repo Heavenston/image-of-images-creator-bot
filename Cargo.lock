@@ -708,7 +708,7 @@ dependencies = [
 [[package]]
 name = "image-of-images-creator"
 version = "0.1.0"
-source = "git+https://github.com/Heavenston/image-of-images-creator#5c4dc019f539a96751f394c5d4c669a945ad2548"
+source = "git+https://github.com/Heavenston/image-of-images-creator?rev=5c4dc019f539a96751f394c5d4c669a945ad2548#5c4dc019f539a96751f394c5d4c669a945ad2548"
 dependencies = [
  "image",
  "palette",

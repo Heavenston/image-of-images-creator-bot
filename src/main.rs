@@ -18,42 +18,40 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
-        for guild in guilds {
-            println!("Registering commands for guild {:?}", guild.name(&ctx.cache).await);
-            for c in guild.get_application_commands(&ctx.http).await.unwrap() {
-                println!("Unregistering command {}", c.name);
-                guild.delete_application_command(&ctx.http, c.id).await.unwrap();
-            }
-            println!("Registering command transform");
-            guild.create_application_command(&ctx.http, |a| {
-                a
-                    .name("transform")
-                    .description("Transform an image/your profile picture")
-                    .create_option(|o| {
-                        o.name("avatar")
-                            .kind(ApplicationCommandOptionType::SubCommand)
-                            .description("Transform your avatar")
-                            .create_sub_option(|o| o
-                                .name("target_user")
-                                .description("User of whom the avatar will be taken from")
-                                .required(false)
-                                .kind(ApplicationCommandOptionType::User)
-                            )
-                    })
-                    .create_option(|o| {
-                        o.name("image")
-                            .kind(ApplicationCommandOptionType::SubCommand)
-                            .description("Transform the given image")
-                            .create_sub_option(|o| o
-                                .name("image_url")
-                                .description("Image to be downloaded")
-                                .required(true)
-                                .kind(ApplicationCommandOptionType::String)
-                            )
-                    })
-            }).await.unwrap();
+    async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
+        println!("Registering commands for guild {:?}", guild.name);
+        for c in guild.get_application_commands(&ctx.http).await.unwrap() {
+            println!("Unregistering command {}", c.name);
+            guild.delete_application_command(&ctx.http, c.id).await.unwrap();
         }
+        println!("Registering command transform");
+        guild.create_application_command(&ctx.http, |a| {
+            a
+                .name("transform")
+                .description("Transform an image/your profile picture")
+                .create_option(|o| {
+                    o.name("avatar")
+                        .kind(ApplicationCommandOptionType::SubCommand)
+                        .description("Transform your avatar")
+                        .create_sub_option(|o| o
+                            .name("target_user")
+                            .description("User of whom the avatar will be taken from")
+                            .required(false)
+                            .kind(ApplicationCommandOptionType::User)
+                        )
+                })
+                .create_option(|o| {
+                    o.name("image")
+                        .kind(ApplicationCommandOptionType::SubCommand)
+                        .description("Transform the given image")
+                        .create_sub_option(|o| o
+                            .name("image_url")
+                            .description("Image to be downloaded")
+                            .required(true)
+                            .kind(ApplicationCommandOptionType::String)
+                        )
+                })
+        }).await.unwrap();
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {

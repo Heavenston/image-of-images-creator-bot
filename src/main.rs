@@ -226,7 +226,11 @@ impl EventHandler for Handler {
                 }
             });
             loop {
-                new_upload_progress_notify.notified().await;
+                tokio::select! {
+                    _ = new_upload_progress_notify.notified() => (),
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => ()
+                }
+
                 let upload_progress = upload_progress.load(Ordering::Relaxed);
                 let progress_bar_length = 15;
                 let mut progress_bar = String::new();

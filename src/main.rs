@@ -81,18 +81,34 @@ impl EventHandler for Handler {
                         ApplicationCommandInteractionDataOptionValue::String(u) => u.clone(),
                         _ => unreachable!()
                     };
-                    if !(url.starts_with("https://cdn.discordapp.com") || url.starts_with("https://media.discordapp.net")) {
-                        interaction
-                            .create_interaction_response(&ctx.http, move |response| {
-                                response
-                                    .kind(InteractionResponseType::ChannelMessageWithSource)
-                                    .interaction_response_data(|d| {
-                                        d.content("You can only use images hosted by discord")
-                                    })
-                            })
-                            .await
-                            .unwrap();
-                        return
+                    match reqwest::Url::parse(&url) {
+                        Ok(u) if u.host_str().map(|a| a.ends_with("discordapp.com") | a.ends_with("discordapp.net")).unwrap_or(false) => (),
+                        Err(..) => {
+                            interaction
+                                .create_interaction_response(&ctx.http, move |response| {
+                                    response
+                                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                                        .interaction_response_data(|d| {
+                                            d.content("Invalid url")
+                                        })
+                                })
+                                .await
+                                .unwrap();
+                            return
+                        },
+                        _ => {
+                            interaction
+                                .create_interaction_response(&ctx.http, move |response| {
+                                    response
+                                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                                        .interaction_response_data(|d| {
+                                            d.content("You can only use discord hosted images")
+                                        })
+                                })
+                                .await
+                                .unwrap();
+                            return
+                        },
                     }
                     url
                 },
@@ -122,12 +138,12 @@ impl EventHandler for Handler {
             let image_bytes = response.bytes().await.unwrap();
 
             let image_dictionary = self.image_dictionary.clone();
-            let upload_response = tokio::task::spawn_blocking(move || {
+            let img_data = tokio::task::spawn_blocking(move || {
                 let image = image::load_from_memory(&*image_bytes).unwrap()
-                    .resize(100, 100, image::imageops::Triangle).to_rgb8();
+                    .resize(250, 250, image::imageops::Triangle).to_rgb8();
                 let new_image = image_of_image(&*image_dictionary, &image);
                 let mut img_data = Vec::new();
-                let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut img_data);
+                let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut img_data, 25);
                 encoder.encode(
                     new_image.as_raw(),
                     new_image.width(),
@@ -135,47 +151,21 @@ impl EventHandler for Handler {
                     ColorType::Rgb8
                 ).unwrap();
 
-                #[derive(Debug, serde::Serialize, serde::Deserialize)]
-                struct ImgurUploadResponseData {
-                    link: Option<String>,
-                }
-                #[derive(Debug, serde::Serialize, serde::Deserialize)]
-                struct ImgurUploadResponse {
-                    status: u16,
-                    success: bool,
-                    data: Option<ImgurUploadResponseData>,
-                }
-                use reqwest::blocking as rq;
-
-                let form = rq::multipart::Form::new()
-                    .part("image", rq::multipart::Part::bytes(img_data)
-                        .file_name("hi.jpg")
-                        .mime_str("image/jpg").unwrap());
-                let response = rq::Client::new().post("https://api.imgur.com/3/upload")
-                    .header("Authorization", "Client-ID fa0755936d63104")
-                    .multipart(form).send().unwrap();
-
-                response.json::<ImgurUploadResponse>().unwrap()
+                img_data
             }).await.unwrap();
 
-
-            if !upload_response.success {
-                interaction
-                    .create_followup_message(&ctx.http, |response| {
-                        response.content("Could not upload image result")
-                    })
-                    .await
-                    .unwrap();
-            }
-            else {
-                interaction
-                    .create_followup_message(&ctx.http, |response| {
-                        response
-                            .create_embed(|e| e.image(upload_response.data.unwrap().link.unwrap()))
-                    })
-                    .await
-                    .unwrap();
-            }
+            interaction
+                .create_followup_message(&ctx.http, |response| {
+                    response.content("Uploading image")
+                })
+                .await
+                .unwrap();
+            interaction.channel_id.unwrap().send_files(&ctx.http, vec![(
+                img_data.as_slice(),
+                "new_image.jpg"
+            )], |m| {
+                m
+            }).await.unwrap();
         }
     }
 }
@@ -193,7 +183,7 @@ async fn main() {
     let image_dictionary = Arc::new({
         use rayon::prelude::*;
 
-        let reader = ImageDictionaryReader::open(&env::var("DICTIONARY_PATH").expect("No dictionary path selected"), (16, 16)).unwrap();
+        let reader = ImageDictionaryReader::open(&env::var("DICTIONARY_PATH").expect("No dictionary path selected"), (25, 25)).unwrap();
         println!("Loading {} images", reader.len());
         let mut chunks = reader.split(reader.unprocessed_len() / rayon::current_num_threads());
 
